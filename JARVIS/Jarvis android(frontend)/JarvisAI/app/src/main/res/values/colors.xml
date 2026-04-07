@@ -1,0 +1,15 @@
+<resources>
+
+    <!-- Space Backgrounds -->
+    <color name="space_black">#050A13</color>
+    <color name="deep_space">#0B1A2A</color>
+
+    <!-- Neon Core Colors -->
+    <color name="neon_blue">#00C6FF</color>
+    <color name="neon_cyan">#00F5FF</color>
+    <color name="neon_purple">#7B00FF</color>
+
+    <!-- Glow Overlay -->
+    <color name="glow_blue">#3300C6FF</color>
+
+</resources>

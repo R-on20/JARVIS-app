@@ -1,0 +1,15 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.JarvisAI" parent="Theme.Material3.Dark.NoActionBar">
+
+        <!-- Background -->
+        <item name="android:windowBackground">@color/space_black</item>
+
+        <!-- Primary Neon -->
+        <item name="colorPrimary">@color/neon_blue</item>
+        <item name="colorSecondary">@color/neon_cyan</item>
+
+        <!-- Status bar -->
+        <item name="android:statusBarColor">@color/space_black</item>
+
+    </style>
+</resources>
