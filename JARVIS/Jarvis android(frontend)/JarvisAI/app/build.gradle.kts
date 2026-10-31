@@ -59,6 +59,7 @@ dependencies {
     // ✅ ADD THIS
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(libs.androidx.compose.animation.core)
+    implementation("androidx.compose.animation:animation:1.7.8")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
