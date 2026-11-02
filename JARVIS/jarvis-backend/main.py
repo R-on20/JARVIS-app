@@ -20,6 +20,7 @@ from core.responses import (
 )
 from services.email_service import GmailService
 from services.memory_service import MemoryService
+from services.memory_extractor import MemoryExtractor
 from models.email_models import CommandRequest
 from tempfile import NamedTemporaryFile
 
@@ -177,101 +178,6 @@ def get_gmail_service():
 
     return _gmail_service
 
-# ---------------------------------------------------------
-# MEMORY HELPERS
-# ---------------------------------------------------------
-
-def detect_memory(text: str):
-    """
-    Detect simple, explicit pieces of information
-    that JARVIS should remember.
-    """
-
-    text_lower = text.lower().strip()
-
-    # -----------------------------------------------------
-    # EXPLICIT MEMORY REQUEST
-    # -----------------------------------------------------
-
-    if text_lower.startswith("remember that "):
-
-        memory = text.strip()[14:].strip()
-
-        return {
-            "memory": memory,
-            "category": "general"
-        }
-
-    if text_lower.startswith("remember "):
-
-        memory = text.strip()[9:].strip()
-
-        return {
-            "memory": memory,
-            "category": "general"
-        }
-
-    if text_lower.startswith("don't forget that "):
-
-        memory = text.strip()[18:].strip()
-
-        return {
-            "memory": memory,
-            "category": "general"
-        }
-
-    # -----------------------------------------------------
-    # PERSONAL INFORMATION
-    # -----------------------------------------------------
-
-    if text_lower.startswith("my name is "):
-
-        return {
-            "memory": text.strip(),
-            "category": "personal"
-        }
-
-    if text_lower.startswith("call me "):
-
-        return {
-            "memory": text.strip(),
-            "category": "personal"
-        }
-
-    # -----------------------------------------------------
-    # PREFERENCES
-    # -----------------------------------------------------
-
-    if (
-        text_lower.startswith("i prefer ")
-        or text_lower.startswith("i like ")
-        or text_lower.startswith("i don't like ")
-        or text_lower.startswith("i dislike ")
-    ):
-
-        return {
-            "memory": text.strip(),
-            "category": "preference"
-        }
-
-    # -----------------------------------------------------
-    # WORK / PROJECTS
-    # -----------------------------------------------------
-
-    if (
-        text_lower.startswith("i work as ")
-        or text_lower.startswith("i'm building ")
-        or text_lower.startswith("i am building ")
-        or text_lower.startswith("my project is ")
-        or text_lower.startswith("my goal is ")
-    ):
-
-        return {
-            "memory": text.strip(),
-            "category": "project"
-        }
-
-    return None
 
 
 # ---------------------------------------------------------
@@ -283,6 +189,10 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
+memory_extractor = MemoryExtractor(
+    client=client,
+    model=OPENROUTER_MODEL
+)
 
 # ---------------------------------------------------------
 # STT
@@ -411,21 +321,31 @@ async def chat(data: dict):
         # MEMORY: DETECT NEW MEMORY
         # -------------------------------------------------
 
-        detected_memory = detect_memory(
+        detected_memories = memory_extractor.extract(
             user_text
         )
 
-        if detected_memory:
+        for detected_memory in detected_memories:
+
+            memory_text = detected_memory.get(
+                "memory",
+                ""
+            ).strip()
+
+            category = detected_memory.get("category", "general").strip()
+
+            if not memory_text:
+                continue
 
             memory_id = memory_service.save_memory(
-                memory=detected_memory["memory"],
-                category=detected_memory["category"]
+                memory=memory_text,
+                category=category
             )
 
             print(
                 f"Memory saved: "
-                f"{detected_memory['memory']} "
-                f"(id={memory_id})"
+                f"{memory_text} "
+                f"(category={category}, id={memory_id})"
             )
 
 
