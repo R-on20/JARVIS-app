@@ -8,85 +8,92 @@ class MemoryExtractor:
         self.client = client
         self.model = model
 
-    def extract(self, user_text: str):
+    def extract(self, user_text: str, existing_memories=None):
         """
-        Analyze a user's message and determine whether it contains
-        information worth remembering long-term.
+        Extract useful long-term memories and identify
+        existing memories that should be superseded.
+        """
 
-        Returns a list of memory objects.
-        """
+        existing_memories = existing_memories or []
 
         system_prompt = """
 You are JARVIS's memory manager.
 
-Your job is to identify useful, long-term information about the user
-that JARVIS should remember for future conversations.
+Your job is to extract useful, long-term information about the
+user and identify outdated memories that the new information
+explicitly corrects or replaces.
 
-Remember information such as:
-
+Remember:
 - Personal information
-- Interests and hobbies
 - Preferences
-- Likes and dislikes
-- Habits and routines
-- Long-term goals
-- Work and career
+- Interests
+- Habits
+- Goals
 - Education
+- Career
 - Projects
-- Recurring activities
+- Long-term plans
 - Communication preferences
-- Useful personality traits
-- Important long-term plans
 
 Do NOT remember:
-
 - Temporary actions
 - One-time actions
 - Ordinary conversation
 - Questions
 - Requests
-- Temporary plans
 - General knowledge
 - Facts about other people
-- Information that is unlikely to help JARVIS assist the user
-- Small talk
+- Temporary plans
 
-IMPORTANT:
+IMPORTANT CORRECTION RULES:
 
-The user does NOT need to explicitly say "remember this".
-
-Use the meaning and context of the message to determine whether
-something is worth remembering.
+1. Compare the user's message with the existing memories provided.
+2. If the user explicitly corrects or replaces an existing fact,
+   include that old memory's ID in "supersedes".
+3. Only supersede memories that genuinely conflict with the
+   new information.
+4. Do not supersede unrelated memories merely because they
+   mention the same technology, person, or project.
+5. Do not supersede a historical fact just because the user's
+   current situation has changed.
+6. A new preference does not automatically replace an old goal.
+7. If the user says they are no longer doing something,
+   supersede the corresponding current activity memory.
+8. If there is no correction, return an empty supersedes list.
+9. Never invent memory IDs.
 
 For example:
 
-"I play football."
+Existing memory:
+{"id": 41, "memory": "Is learning Django."}
 
-should be remembered.
+User:
+"I am no longer learning Django. I'm currently focusing
+on improving my FastAPI skills."
 
-"I usually play midfield."
+Expected result:
+{
+    "memories": [
+        {
+            "memory": "Is currently focusing on improving FastAPI skills.",
+            "category": "education"
+        }
+    ],
+    "supersedes": [41]
+}
 
-should be remembered.
+Another example:
 
-"I prefer working at night."
+Existing memory:
+{"id": 25, "memory": "My preferred backend technologies are Python, FastAPI, and Django."}
 
-should be remembered.
+User:
+"I am no longer learning Django."
 
-"I'm going to make coffee."
+Do NOT supersede ID 25. A technology preference is not the
+same thing as a current learning activity.
 
-should NOT be remembered.
-
-"I opened VS Code."
-
-should NOT be remembered.
-
-"Remember that my favorite language is Python."
-
-should ALWAYS be remembered.
-
-If a message contains multiple useful facts, extract them separately.
-
-Return ONLY valid JSON in exactly this format:
+Return ONLY valid JSON in this format:
 
 {
     "memories": [
@@ -94,7 +101,8 @@ Return ONLY valid JSON in exactly this format:
             "memory": "A concise statement of the fact.",
             "category": "personal"
         }
-    ]
+    ],
+    "supersedes": []
 }
 
 Allowed categories:
@@ -110,14 +118,25 @@ goal
 personality
 general
 
-If there is nothing worth remembering, return:
+If nothing is worth remembering, return:
 
 {
-    "memories": []
+    "memories": [],
+    "supersedes": []
 }
 """
 
         try:
+
+            user_prompt = f"""
+EXISTING MEMORIES:
+
+{json.dumps(existing_memories, ensure_ascii=False)}
+
+NEW USER MESSAGE:
+
+{user_text}
+"""
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -128,22 +147,59 @@ If there is nothing worth remembering, return:
                     },
                     {
                         "role": "user",
-                        "content": user_text
+                        "content": user_prompt
                     }
                 ],
-                temperature=0
+                temperature=0,
+                max_tokens=1000,
+                extra_body={
+                    "reasoning": {
+                        "enabled": False
+                    }
+                }
             )
 
-            content = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+
+            if not content:
+                print("MEMORY EXTRACTION: Empty response")
+                return {"memories": [], "supersedes": []}
+
+            content = content.strip()
+
+            if content.startswith("```"):
+                content = content.replace("```json", "", 1)
+                content = content.replace("```", "").strip()
 
             result = json.loads(content)
 
             memories = result.get("memories", [])
+            supersedes = result.get("supersedes", [])
 
             if not isinstance(memories, list):
-                return []
+                memories = []
 
-            return memories
+            if not isinstance(supersedes, list):
+                supersedes = []
+
+            # Only allow IDs belonging to existing memories.
+            valid_ids = {
+                memory["id"]
+                for memory in existing_memories
+                if "id" in memory
+            }
+
+            supersedes = [
+                memory_id
+                for memory_id in supersedes
+                if isinstance(memory_id, int)
+                and memory_id in valid_ids
+            ]
+
+            return {
+                "memories": memories,
+                "supersedes": supersedes
+            }
 
         except Exception as e:
 
@@ -152,4 +208,7 @@ If there is nothing worth remembering, return:
                 str(e)
             )
 
-            return []
+            return {
+                "memories": [],
+                "supersedes": []
+            }

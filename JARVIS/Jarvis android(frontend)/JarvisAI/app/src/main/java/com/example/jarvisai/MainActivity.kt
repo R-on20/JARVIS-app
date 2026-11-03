@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
     private var responseText by mutableStateOf("")
 
     private val BASE_URL =
-        "https://spell-fabrics-bikini-preparation.trycloudflare.com"
+        "https://dream-models-alberta-spoken.trycloudflare.com"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

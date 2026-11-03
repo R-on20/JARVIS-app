@@ -1,4 +1,3 @@
-
 import os
 import io
 import shutil
@@ -21,6 +20,7 @@ from core.responses import (
 from services.email_service import GmailService
 from services.memory_service import MemoryService
 from services.memory_extractor import MemoryExtractor
+from services.memory_retriever import MemoryRetriever
 from models.email_models import CommandRequest
 from tempfile import NamedTemporaryFile
 
@@ -194,6 +194,11 @@ memory_extractor = MemoryExtractor(
     model=OPENROUTER_MODEL
 )
 
+memory_retriever = MemoryRetriever(
+    client=client,
+    model=OPENROUTER_MODEL
+)
+
 # ---------------------------------------------------------
 # STT
 # ---------------------------------------------------------
@@ -317,24 +322,62 @@ async def chat(data: dict):
             )
 
 
-        # -------------------------------------------------
-        # MEMORY: DETECT NEW MEMORY
+                # -------------------------------------------------
+        # MEMORY: DETECT NEW MEMORY AND CORRECTIONS
         # -------------------------------------------------
 
-        detected_memories = memory_extractor.extract(
-            user_text
+        existing_memories = memory_service.get_all_memories()
+
+        extraction_result = memory_extractor.extract(
+            user_text=user_text,
+            existing_memories=existing_memories
         )
 
+        detected_memories = extraction_result.get(
+            "memories", []
+        )
+
+        superseded_ids = extraction_result.get(
+            "supersedes", []
+        )
+
+        # Mark outdated memories as superseded
+        if superseded_ids:
+
+            updated_count = memory_service.supersede_memories(
+                superseded_ids
+            )
+
+            print(
+                f"Memories superseded: {updated_count} "
+                f"(IDs: {superseded_ids})"
+            )
+
+        # Save newly detected memories
         for detected_memory in detected_memories:
 
             memory_text = detected_memory.get(
-                "memory",
-                ""
+                "memory", ""
             ).strip()
 
-            category = detected_memory.get("category", "general").strip()
+            category = detected_memory.get(
+                "category", "general"
+            ).strip()
 
             if not memory_text:
+                continue
+
+            # Check for duplicate memories
+            duplicate = memory_service.find_duplicate_memory(
+                memory_text
+            )
+
+            if duplicate:
+                print(
+                    f"Duplicate memory skipped: "
+                    f"{memory_text} "
+                    f"(existing_id={duplicate['id']})"
+                )
                 continue
 
             memory_id = memory_service.save_memory(
@@ -343,19 +386,17 @@ async def chat(data: dict):
             )
 
             print(
-                f"Memory saved: "
-                f"{memory_text} "
+                f"Memory saved: {memory_text} "
                 f"(category={category}, id={memory_id})"
             )
-
 
         # -------------------------------------------------
         # MEMORY: RETRIEVE RELEVANT MEMORIES
         # -------------------------------------------------
-
-        memories = memory_service.search_memories(
-            user_text,
-            limit=5
+        all_memories = memory_service.get_all_memories()
+        memories = memory_retriever.retrieve(
+            user_text=user_text,
+            memories=all_memories
         )
         print(
             "Retrieved memories:",

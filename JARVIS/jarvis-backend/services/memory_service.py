@@ -1,7 +1,7 @@
 import re
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 
 # ---------------------------------------------------------
@@ -26,21 +26,16 @@ class MemoryService:
         self.database_path = DATABASE_PATH
         self.initialize_database()
 
-
     # -----------------------------------------------------
     # DATABASE CONNECTION
     # -----------------------------------------------------
 
     def get_connection(self):
 
-        connection = sqlite3.connect(
-            self.database_path
-        )
-
+        connection = sqlite3.connect(self.database_path)
         connection.row_factory = sqlite3.Row
 
         return connection
-
 
     # -----------------------------------------------------
     # INITIALIZE DATABASE
@@ -56,13 +51,64 @@ class MemoryService:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     memory TEXT NOT NULL,
                     category TEXT DEFAULT 'general',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT NOT NULL DEFAULT 'active'
                 )
                 """
             )
 
+            # Safely migrate databases created before status existed.
+            columns = {
+                row["name"]
+                for row in connection.execute(
+                    "PRAGMA table_info(memories)"
+                ).fetchall()
+            }
+
+            if "status" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE memories
+                    ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+                    """
+                )
+
             connection.commit()
 
+        # -----------------------------------------------------
+    # FIND DUPLICATE MEMORY
+    # -----------------------------------------------------
+
+    def find_duplicate_memory(
+        self,
+        memory: str
+    ) -> Optional[Dict]:
+
+        def normalize(text):
+            text = text.lower().strip()
+            text = re.sub(r"[^\w\s]", "", text)
+            return " ".join(text.split())
+
+        normalized_memory = normalize(memory)
+
+        with self.get_connection() as connection:
+
+            rows = connection.execute(
+                """
+                SELECT id, memory, category, created_at, status
+                FROM memories
+                WHERE status = 'active'
+                """
+            ).fetchall()
+
+            for row in rows:
+
+                existing = dict(row)
+
+                if normalize(existing["memory"]) == normalized_memory:
+                    return existing
+
+        return None
 
     # -----------------------------------------------------
     # SAVE MEMORY
@@ -78,48 +124,40 @@ class MemoryService:
 
             cursor = connection.execute(
                 """
-                INSERT INTO memories (
-                    memory,
-                    category
-                )
-                VALUES (?, ?)
+                INSERT INTO memories (memory, category, status)
+                VALUES (?, ?, 'active')
                 """,
-                (
-                    memory,
-                    category
-                )
+                (memory, category)
             )
 
             connection.commit()
 
             return cursor.lastrowid
 
-
     # -----------------------------------------------------
-    # GET ALL MEMORIES
+    # GET MEMORIES
     # -----------------------------------------------------
 
-    def get_all_memories(self) -> List[Dict]:
+    def get_all_memories(
+        self,
+        include_inactive: bool = False
+    ) -> List[Dict]:
+
+        query = """
+            SELECT id, memory, category, created_at, status
+            FROM memories
+        """
+
+        if not include_inactive:
+            query += " WHERE status = 'active'"
+
+        query += " ORDER BY created_at DESC"
 
         with self.get_connection() as connection:
 
-            rows = connection.execute(
-                """
-                SELECT
-                    id,
-                    memory,
-                    category,
-                    created_at
-                FROM memories
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
+            rows = connection.execute(query).fetchall()
 
-            return [
-                dict(row)
-                for row in rows
-            ]
-
+            return [dict(row) for row in rows]
 
     # -----------------------------------------------------
     # SEARCH MEMORIES
@@ -131,13 +169,11 @@ class MemoryService:
         limit: int = 5
     ) -> List[Dict]:
 
-        # Extract words while removing punctuation
         keywords = re.findall(
             r"\b[a-zA-Z0-9]+\b",
             query.lower()
         )
 
-        # Ignore short, insignificant words
         stop_words = {
             "what", "who", "where", "when",
             "why", "how", "the", "and",
@@ -149,8 +185,7 @@ class MemoryService:
         }
 
         keywords = [
-            word
-            for word in keywords
+            word for word in keywords
             if len(word) > 2 and word not in stop_words
         ]
 
@@ -161,23 +196,14 @@ class MemoryService:
         parameters = []
 
         for keyword in keywords:
-
-            conditions.append(
-                "LOWER(memory) LIKE ?"
-            )
-
-            parameters.append(
-                f"%{keyword}%"
-            )
+            conditions.append("LOWER(memory) LIKE ?")
+            parameters.append(f"%{keyword}%")
 
         sql = f"""
-            SELECT
-                id,
-                memory,
-                category,
-                created_at
+            SELECT id, memory, category, created_at, status
             FROM memories
-            WHERE {" OR ".join(conditions)}
+            WHERE status = 'active'
+            AND ({" OR ".join(conditions)})
             ORDER BY created_at DESC
             LIMIT ?
         """
@@ -191,10 +217,37 @@ class MemoryService:
                 parameters
             ).fetchall()
 
-            return [
-                dict(row)
-                for row in rows
-            ]
+            return [dict(row) for row in rows]
+
+    # -----------------------------------------------------
+    # SUPERSEDE MEMORIES
+    # -----------------------------------------------------
+
+    def supersede_memories(
+        self,
+        memory_ids: List[int]
+    ) -> int:
+
+        if not memory_ids:
+            return 0
+
+        placeholders = ",".join("?" for _ in memory_ids)
+
+        with self.get_connection() as connection:
+
+            cursor = connection.execute(
+                f"""
+                UPDATE memories
+                SET status = 'superseded'
+                WHERE id IN ({placeholders})
+                AND status = 'active'
+                """,
+                memory_ids
+            )
+
+            connection.commit()
+
+            return cursor.rowcount
 
     # -----------------------------------------------------
     # DELETE MEMORY
